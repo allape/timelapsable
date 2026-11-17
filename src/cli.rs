@@ -45,13 +45,26 @@ impl FromStr for OutputFormat {
     version,
     about = "Stabilize and color-match an alphabetical image-sequence timelapse",
     after_help = "Image formats: Sony ARW, JPEG and PNG.\n\
-                  Outputs are written to ./.timelapsable/ as <source-stem>.tlpb.jpg|png.\n\
+                  Outputs are written as <source-stem>.tlpb.jpg|png to <folder>/.timelapsable/\n\
+                  unless --output names another directory. Existing images are skipped\n\
+                  unless --overwrite is given.\n\
                   Stabilization failure exits with status 4."
 )]
 pub struct Cli {
     /// Directory containing the image sequence (single level, no recursion).
     #[arg(short = 'f', long = "folder", value_name = "DIR", default_value = ".")]
     pub folder: PathBuf,
+
+    /// Directory for rendered images and analysis caches.
+    /// Defaults to <folder>/.timelapsable. Relative paths resolve against the
+    /// current working directory and the directory is created when missing.
+    #[arg(short = 'o', long = "output", value_name = "DIR")]
+    pub output: Option<PathBuf>,
+
+    /// Replace output images that already exist. Without this flag, existing
+    /// images are skipped so an interrupted run can be resumed.
+    #[arg(long = "overwrite", action = ArgAction::SetTrue)]
+    pub overwrite: bool,
 
     /// Output format: .jpg or .png.
     #[arg(
@@ -137,6 +150,11 @@ pub fn validate(cli: &Cli) -> anyhow::Result<()> {
     if let Some(wb) = &cli.white_balance {
         if wb.trim().is_empty() {
             return Err(UsageError("--white-balance cannot be empty".to_string()).into());
+        }
+    }
+    if let Some(output) = &cli.output {
+        if output.as_os_str().is_empty() {
+            return Err(UsageError("--output cannot be empty".to_string()).into());
         }
     }
     Ok(())

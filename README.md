@@ -4,8 +4,8 @@
 color-matched, flicker-reduced and crop-stabilized image sequence.
 
 It reads Sony **ARW**, **JPEG** and **PNG** files, analyzes the whole sequence,
-and writes new images to `./.timelapsable/` using the name
-`<source-stem>.tlpb.jpg` (or `.tlpb.png`).
+and writes new images to `<folder>/.timelapsable/` using the name
+`<source-stem>.tlpb.jpg` (or `.tlpb.png`). `--output` writes them elsewhere.
 
 ## Features
 
@@ -40,6 +40,9 @@ timelapsable -f ./images --format .png -b 10 -w 5600
 # Disable crop stabilization for a deliberately soft night sequence.
 timelapsable -f ./images -s false
 
+# Export to ./renders instead of ./images/.timelapsable, replacing old results.
+timelapsable -f ./images -o ./renders --overwrite
+
 # Default folder is the current directory and the default format is .jpg.
 timelapsable
 ```
@@ -49,26 +52,38 @@ timelapsable
 | Option | Default | Description |
 | --- | --- | --- |
 | `-f, --folder DIR` | `.` | Single-level input folder. No recursion. |
+| `-o, --output DIR` | `<folder>/.timelapsable` | Directory for rendered images and analysis caches. Relative paths resolve against the current working directory; the directory is created when missing. |
+| `--overwrite` | `false` | Replace output images that already exist. Without it, existing images are skipped and only missing frames are rendered. |
 | `--format FORMAT` | `.jpg` | Output encoding: `.jpg`/`jpeg` or `.png`. |
 | `-s, --steadicam [BOOL]` | `true` | Enable crop stabilization. `-s false` disables it. |
 | `-w, --white-balance WB` | auto | `auto`, `daylight`, `cloudy`, `shade`, `tungsten`, `fluorescent`, `flash`, or Kelvin in `1500..=15000` such as `5600`/`5600K`. |
 | `-b, --brightness PERCENT` | no manual offset | `-100..=100`. `-100` is pure black, `100` pure white. Values outside `[-90, 90]` produce a warning. |
 
-Long options also accept `--option=value`; booleans accept
-`true/false`, `yes/no`, `on/off`, and `1/0`.
+Long options also accept `--option=value`. The optional `-s` boolean accepts
+`true/false`, `yes/no`, `on/off`, and `1/0`; `--overwrite` is a plain
+switch with no value.
 
 ## Output contract
 
-For an input named `DSC0001.ARW`:
+For an input named `DSC0001.ARW` and the default `--output`:
 
 ```text
-./.timelapsable/DSC0001.tlpb.jpg
-./.timelapsable/.meta.DSC0001.toml
+<folder>/.timelapsable/DSC0001.tlpb.jpg
+<folder>/.timelapsable/.meta.DSC0001.toml
 ```
+
+Both files live in the output directory: `<folder>/.timelapsable` by default,
+or the `--output` directory. The analysis cache follows the output directory, so
+a new `--output` re-analyzes the sequence once.
 
 Input files are discovered only at the top level, filtered to
 `arw/jpg/jpeg/png` case-insensitively, and processed in case-insensitive
 alphabetical file-name order. Previously generated `.tlpb.*` files are skipped.
+
+An existing output image is not replaced by default: that frame is reported as
+skipped and left untouched, so an interrupted run can be resumed. Pass
+`--overwrite` to re-render and replace existing images, for example after
+changing brightness or white balance.
 
 If two source files have the same stem (`A.ARW` and `A.JPG`), the run stops
 with a collision error instead of overwriting one result.
@@ -142,7 +157,8 @@ On startup:
 - If only `-b` or `-w` changes, the analysis pass reports cache hits; rendering
   still decodes the source images because the pixels are needed for output.
 
-Deleting `.timelapsable/.meta.*.toml` forces full re-analysis.
+Deleting the `.meta.*.toml` files in the output directory forces full
+re-analysis.
 
 ## Exit codes
 
@@ -160,8 +176,10 @@ cargo test
 ```
 
 The integration tests generate textured and flat PNG sequences, run the real
-binary, and verify output names, caching, crop behavior, brightness extremes,
-the special stabilization exit code and argument validation.
+binary, and verify output names, the default and `--output` destinations,
+existing-image skipping with `--overwrite`, caching, crop behavior,
+brightness extremes, the special stabilization exit code and argument
+validation.
 
 ## Third-party components
 

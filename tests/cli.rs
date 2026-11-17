@@ -94,8 +94,13 @@ fn sequence() -> (TestDir, PathBuf) {
     (dir, input)
 }
 
-fn output_names(root: &Path) -> Vec<String> {
-    let mut names: Vec<String> = fs::read_dir(root.join(".timelapsable"))
+/// Directory that receives outputs for a sequence stored in `input`.
+fn default_output(input: &Path) -> PathBuf {
+    input.join(".timelapsable")
+}
+
+fn output_names(input: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(default_output(input))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
@@ -105,14 +110,14 @@ fn output_names(root: &Path) -> Vec<String> {
 
 #[test]
 fn end_to_end_writes_png_outputs_and_complete_cache() {
-    let (dir, _input) = sequence();
+    let (dir, input) = sequence();
     let output = run(
         dir.path(),
         &["-f", "input", "--format", ".png", "--brightness", "5"],
     );
     assert_success(&output);
 
-    let names = output_names(dir.path());
+    let names = output_names(&input);
     let pngs: Vec<_> = names
         .iter()
         .filter(|name| name.ends_with(".tlpb.png"))
@@ -126,7 +131,7 @@ fn end_to_end_writes_png_outputs_and_complete_cache() {
     assert!(names.contains(&"frame_000.tlpb.png".to_string()));
     assert!(names.contains(&".meta.frame_000.toml".to_string()));
 
-    let first = image::open(dir.path().join(".timelapsable/frame_000.tlpb.png")).unwrap();
+    let first = image::open(default_output(&input).join("frame_000.tlpb.png")).unwrap();
     assert!(first.width() < 360, "stabilization should crop: {first:?}");
     assert!(
         first.height() <= 240,
@@ -134,7 +139,7 @@ fn end_to_end_writes_png_outputs_and_complete_cache() {
     );
 
     let cache_text =
-        fs::read_to_string(dir.path().join(".timelapsable/.meta.frame_000.toml")).unwrap();
+        fs::read_to_string(default_output(&input).join(".meta.frame_000.toml")).unwrap();
     let cache: toml::Value = toml::from_str(&cache_text).unwrap();
     assert_eq!(cache["complete"].as_bool(), Some(true));
     assert!(cache["checksum"]
@@ -151,20 +156,30 @@ fn end_to_end_writes_png_outputs_and_complete_cache() {
 
 #[test]
 fn cache_is_reused_when_only_brightness_changes() {
-    let (dir, _input) = sequence();
+    let (dir, input) = sequence();
     let first = run(
         dir.path(),
         &["-f", "input", "--format", ".png", "-s", "false"],
     );
     assert_success(&first);
-    let meta_path = dir.path().join(".timelapsable/.meta.frame_000.toml");
+    let meta_path = default_output(&input).join(".meta.frame_000.toml");
     let before = fs::metadata(&meta_path).unwrap().modified().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
 
     let second = run(
         dir.path(),
         &[
-            "-f", "input", "--format", ".png", "-s", "false", "-b", "12", "-w", "5600",
+            "-f",
+            "input",
+            "--format",
+            ".png",
+            "-s",
+            "false",
+            "-b",
+            "12",
+            "-w",
+            "5600",
+            "--overwrite",
         ],
     );
     assert_success(&second);
@@ -206,7 +221,7 @@ fn blurry_sequence_uses_special_exit_code_and_can_be_overridden() {
 
 #[test]
 fn brightness_extremes_produce_black_and_white() {
-    let (dir, _input) = sequence();
+    let (dir, input) = sequence();
     let white = run(
         dir.path(),
         &[
@@ -214,7 +229,7 @@ fn brightness_extremes_produce_black_and_white() {
         ],
     );
     assert_success(&white);
-    let image = image::open(dir.path().join(".timelapsable/frame_002.tlpb.png")).unwrap();
+    let image = image::open(default_output(&input).join("frame_002.tlpb.png")).unwrap();
     assert!(image
         .to_rgb8()
         .pixels()
@@ -223,11 +238,19 @@ fn brightness_extremes_produce_black_and_white() {
     let black = run(
         dir.path(),
         &[
-            "-f", "input", "--format", ".png", "-s", "false", "-b", "-100",
+            "-f",
+            "input",
+            "--format",
+            ".png",
+            "-s",
+            "false",
+            "-b",
+            "-100",
+            "--overwrite",
         ],
     );
     assert_success(&black);
-    let image = image::open(dir.path().join(".timelapsable/frame_002.tlpb.png")).unwrap();
+    let image = image::open(default_output(&input).join("frame_002.tlpb.png")).unwrap();
     assert!(image.to_rgb8().pixels().all(|pixel| pixel.0 == [0, 0, 0]));
 }
 
@@ -244,35 +267,42 @@ fn invalid_values_are_usage_errors() {
     assert_eq!(bad_wb.status.code(), Some(2));
     let bad_format = run(dir.path(), &["-f", "input", "--format", ".tif"]);
     assert_eq!(bad_format.status.code(), Some(2));
+    let empty_output = run(dir.path(), &["-f", "input", "-o", ""]);
+    assert_eq!(empty_output.status.code(), Some(2));
 }
 
 #[test]
 fn default_jpeg_output_and_high_brightness_warning() {
-    let (dir, _input) = sequence();
+    let (dir, input) = sequence();
     let output = run(dir.path(), &["-f", "input", "-s", "false", "-b", "95"]);
     assert_success(&output);
-    assert!(dir
-        .path()
-        .join(".timelapsable/frame_000.tlpb.jpg")
-        .is_file());
+    assert!(default_output(&input).join("frame_000.tlpb.jpg").is_file());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("recommended range"), "stderr: {stderr}");
 }
 
 #[test]
 fn truncated_cache_is_reported_and_regenerated() {
-    let (dir, _input) = sequence();
+    let (dir, input) = sequence();
     let first = run(
         dir.path(),
         &["-f", "input", "--format", ".png", "-s", "false"],
     );
     assert_success(&first);
-    let meta_path = dir.path().join(".timelapsable/.meta.frame_000.toml");
+    let meta_path = default_output(&input).join(".meta.frame_000.toml");
     fs::write(&meta_path, "cache_version = 1\ncomplete = true\n").unwrap();
 
     let second = run(
         dir.path(),
-        &["-f", "input", "--format", ".png", "-s", "false"],
+        &[
+            "-f",
+            "input",
+            "--format",
+            ".png",
+            "-s",
+            "false",
+            "--overwrite",
+        ],
     );
     assert_success(&second);
     let stderr = String::from_utf8_lossy(&second.stderr);
@@ -282,6 +312,91 @@ fn truncated_cache_is_reported_and_regenerated() {
     assert!(cache["checksum"]
         .as_str()
         .is_some_and(|value| !value.is_empty()));
+}
+
+#[test]
+fn output_option_redirects_rendered_files() {
+    let (dir, input) = sequence();
+    let relative = run(
+        dir.path(),
+        &[
+            "-f", "input", "--format", ".png", "-s", "false", "-o", "exports",
+        ],
+    );
+    assert_success(&relative);
+    assert!(dir.path().join("exports/frame_000.tlpb.png").is_file());
+    assert!(dir.path().join("exports/.meta.frame_000.toml").is_file());
+    assert!(
+        !default_output(&input).exists(),
+        "the default folder should not be created when --output is given"
+    );
+    let stdout = String::from_utf8_lossy(&relative.stdout);
+    assert!(stdout.contains("exports"), "stdout: {stdout}");
+
+    let absolute_dir = dir.path().join("absolute-out");
+    let absolute = run(
+        dir.path(),
+        &[
+            "-f",
+            "input",
+            "--format",
+            ".png",
+            "-s",
+            "false",
+            "-o",
+            absolute_dir.to_str().unwrap(),
+        ],
+    );
+    assert_success(&absolute);
+    assert!(absolute_dir.join("frame_004.tlpb.png").is_file());
+}
+
+#[test]
+fn existing_outputs_are_skipped_until_overwrite_is_allowed() {
+    let (dir, _input) = sequence();
+    let args = [
+        "-f", "input", "--format", ".png", "-s", "false", "-o", "exports",
+    ];
+    let first = run(dir.path(), &args);
+    assert_success(&first);
+    let output_path = dir.path().join("exports/frame_000.tlpb.png");
+
+    // A sentinel proves the second run leaves the existing file untouched.
+    fs::write(&output_path, b"sentinel bytes").unwrap();
+    let second = run(dir.path(), &args);
+    assert_success(&second);
+    assert_eq!(fs::read(&output_path).unwrap(), b"sentinel bytes");
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        stdout.contains("skipped, already exists"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("5 skipped"), "stdout: {stdout}");
+
+    let mut overwrite_args = args.to_vec();
+    overwrite_args.push("--overwrite");
+    let third = run(dir.path(), &overwrite_args);
+    assert_success(&third);
+    let image = image::open(&output_path).unwrap();
+    assert_eq!(image.width(), 360, "uncropped output was rewritten");
+    assert_eq!(image.height(), 240);
+    let stdout = String::from_utf8_lossy(&third.stdout);
+    assert!(stdout.contains("0 skipped"), "stdout: {stdout}");
+}
+
+#[test]
+fn output_path_that_is_a_file_is_rejected() {
+    let (dir, _input) = sequence();
+    fs::write(dir.path().join("blocked"), b"not a directory").unwrap();
+    let output = run(
+        dir.path(),
+        &[
+            "-f", "input", "--format", ".png", "-s", "false", "-o", "blocked",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("is not a directory"), "stderr: {stderr}");
 }
 
 fn generate_flicker_frame(path: &Path, frame: usize) {
@@ -367,7 +482,7 @@ fn automatic_matching_reduces_brightness_and_color_flicker() {
     for frame in 0..6 {
         let name = format!("flicker_{frame:03}");
         let (il, ir, ib) = image_stats(&input.join(format!("{name}.png")));
-        let (ol, or, ob) = image_stats(&dir.path().join(format!(".timelapsable/{name}.tlpb.png")));
+        let (ol, or, ob) = image_stats(&default_output(&input).join(format!("{name}.tlpb.png")));
         input_luma.push(il);
         output_luma.push(ol);
         input_red.push(ir);

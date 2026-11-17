@@ -17,6 +17,9 @@ use crate::render::{encode_image, render_frame};
 use crate::scan::{self, InputImage};
 use crate::source::SourceId;
 
+/// Default output directory created inside the input folder.
+const DEFAULT_OUTPUT_DIR_NAME: &str = ".timelapsable";
+
 /// Runs the complete timelapse pipeline.
 pub fn run(cli: Cli) -> Result<()> {
     cli::validate(&cli)?;
@@ -25,7 +28,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
     let cwd = std::env::current_dir().context("cannot determine current working directory")?;
     let folder = resolve_folder(&cwd, &cli.folder)?;
-    let output_dir = folder.join(".timelapsable");
+    let output_dir = resolve_output_dir(&cwd, cli.output.as_deref(), &folder)?;
 
     let images = scan::scan_folder(&folder)?;
     if images.is_empty() {
@@ -50,13 +53,28 @@ pub fn run(cli: Cli) -> Result<()> {
     let plan = build_plan(&images, &caches, cli.steadicam, white_balance)?;
     print_plan(&plan);
 
-    render_sequence(&images, &caches, &plan, &output_dir, cli.format, brightness)?;
+    let (written, skipped) = render_sequence(
+        &images,
+        &caches,
+        &plan,
+        &output_dir,
+        cli.format,
+        brightness,
+        cli.overwrite,
+    )?;
 
-    println!(
-        "Done: {} frame(s) written to {}",
-        images.len(),
-        output_dir.display()
-    );
+    if skipped == 0 {
+        println!(
+            "Done: {written} frame(s) written to {}",
+            output_dir.display()
+        );
+    } else {
+        println!(
+            "Done: {written} frame(s) written, {skipped} skipped because they already exist \
+             (use --overwrite to replace them) in {}",
+            output_dir.display()
+        );
+    }
     Ok(())
 }
 
@@ -77,6 +95,48 @@ fn resolve_folder(cwd: &Path, folder: &Path) -> Result<PathBuf> {
         .with_context(|| format!("cannot resolve input folder '{}'", candidate.display()))
 }
 
+/// Resolves `--output`, defaulting to `<folder>/.timelapsable`.
+fn resolve_output_dir(cwd: &Path, output: Option<&Path>, folder: &Path) -> Result<PathBuf> {
+    let candidate = match output {
+        Some(path) if path.is_absolute() => normalize_path(path),
+        Some(path) => normalize_path(&cwd.join(path)),
+        None => folder.join(DEFAULT_OUTPUT_DIR_NAME),
+    };
+    if candidate.exists() {
+        if !candidate.is_dir() {
+            bail!(
+                "output path '{}' exists but is not a directory",
+                candidate.display()
+            );
+        }
+        return fs::canonicalize(&candidate)
+            .with_context(|| format!("cannot resolve output directory '{}'", candidate.display()));
+    }
+    Ok(candidate)
+}
+
+/// Removes `.` components and folds `..` lexically, without touching the
+/// filesystem, so a not-yet-created output path still displays cleanly.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Popping the filesystem root is a no-op ("/.." stays "/").
+                let at_root = normalized.has_root() && normalized.parent().is_none();
+                if !normalized.pop() && !at_root {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
 fn print_scan(
     folder: &Path,
     output_dir: &Path,
@@ -92,6 +152,14 @@ fn print_scan(
     }
     println!("Output folder: {}", output_dir.display());
     println!("Output format: {}", cli.format.extension());
+    println!(
+        "Overwrite existing images: {}",
+        if cli.overwrite {
+            "yes"
+        } else {
+            "no (existing images are skipped)"
+        }
+    );
     println!(
         "Stabilization: {}",
         if cli.steadicam { "enabled" } else { "disabled" }
@@ -241,6 +309,9 @@ fn analyze_one(image: &InputImage, prev: Option<SourceId>) -> Result<(FrameCache
 }
 
 /// Renders all planned frames and writes them to the output folder.
+///
+/// Returns the number of frames written and the number skipped because their
+/// output image already existed. Skipped frames are not decoded.
 fn render_sequence(
     images: &[InputImage],
     caches: &[FrameCache],
@@ -248,14 +319,32 @@ fn render_sequence(
     output_dir: &Path,
     format: cli::OutputFormat,
     brightness: f64,
-) -> Result<()> {
+    overwrite: bool,
+) -> Result<(usize, usize)> {
     println!("Rendering {} frame(s)...", images.len());
+    let mut written = 0_usize;
+    let mut skipped = 0_usize;
     for (index, ((image, cache), frame_plan)) in images
         .iter()
         .zip(caches.iter())
         .zip(plan.frames.iter())
         .enumerate()
     {
+        let output_path = output_dir.join(image.output_name(format));
+        if !overwrite && output_path.exists() {
+            skipped += 1;
+            println!(
+                "[{}/{}] {} -> {} (skipped, already exists)",
+                index + 1,
+                images.len(),
+                image.file_name,
+                output_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy())
+                    .unwrap_or_default()
+            );
+            continue;
+        }
         let current_source = SourceId::from_path(&image.path)?;
         if current_source != image.source {
             bail!(
@@ -276,8 +365,8 @@ fn render_sequence(
             );
         }
         let rendered = render_frame(decoded.image, frame_plan, brightness)?;
-        let output_path = output_dir.join(image.output_name(format));
         encode_image(&output_path, &rendered, format)?;
+        written += 1;
         println!(
             "[{}/{}] {} -> {} ({}x{})",
             index + 1,
@@ -291,7 +380,8 @@ fn render_sequence(
             rendered.height()
         );
     }
-    Ok(())
+    println!("Render complete: {written} written, {skipped} skipped.");
+    Ok((written, skipped))
 }
 
 fn print_plan(plan: &SequencePlan) {
@@ -312,4 +402,19 @@ fn print_plan(plan: &SequencePlan) {
         "Exposure matching: mean linear gain {:.3}",
         plan.mean_exposure_gain()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_path_folds_dot_components() {
+        assert_eq!(
+            normalize_path(Path::new("/a/b/./c/../d")),
+            PathBuf::from("/a/b/d")
+        );
+        assert_eq!(normalize_path(Path::new("/a/../..")), PathBuf::from("/"));
+        assert_eq!(normalize_path(Path::new("/a/b/")), PathBuf::from("/a/b"));
+    }
 }
