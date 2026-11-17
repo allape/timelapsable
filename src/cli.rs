@@ -49,7 +49,19 @@ impl FromStr for OutputFormat {
                   unless --output names another directory. Existing images are skipped\n\
                   unless --overwrite is given. Valid analysis caches are reused unless\n\
                   --no-cache regenerates them.\n\
-                  Stabilization failure exits with status 4."
+                  Stabilization failure exits with status 4.",
+    after_long_help = "Project:  https://github.com/allape/timelapsable\n\
+                       License:  MIT, see https://github.com/allape/timelapsable/blob/main/LICENSE\n\
+                       \n\
+                       Third-party components:\n\
+                       \x20 rawler        LGPL-2.1          https://crates.io/crates/rawler\n\
+                       \x20 kamadak-exif  BSD-2-Clause      https://crates.io/crates/kamadak-exif\n\
+                       \x20 image         MIT OR Apache-2.0 https://crates.io/crates/image\n\
+                       \x20 rustfft       MIT OR Apache-2.0 https://crates.io/crates/rustfft\n\
+                       \n\
+                       Full dependency list: https://github.com/allape/timelapsable/blob/main/Cargo.lock\n\
+                       The ARW decoder is LGPL-2.1; redistributing a statically linked binary\n\
+                       requires compliance with that license."
 )]
 pub struct Cli {
     /// Directory containing the image sequence (single level, no recursion).

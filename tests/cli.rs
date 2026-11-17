@@ -318,6 +318,38 @@ fn invalid_values_are_usage_errors() {
 }
 
 #[test]
+fn help_lists_project_license_and_dependency_links() {
+    let dir = TestDir::new("help");
+    let output = run(dir.path(), &["--help"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for link in [
+        "https://github.com/allape/timelapsable",
+        "https://github.com/allape/timelapsable/blob/main/LICENSE",
+        "https://github.com/allape/timelapsable/blob/main/Cargo.lock",
+        "https://crates.io/crates/rawler",
+        "https://crates.io/crates/kamadak-exif",
+        "https://crates.io/crates/image",
+        "https://crates.io/crates/rustfft",
+    ] {
+        assert!(stdout.contains(link), "missing {link} in --help:\n{stdout}");
+    }
+    assert!(stdout.contains("MIT"), "project license missing:\n{stdout}");
+    assert!(
+        stdout.contains("LGPL-2.1"),
+        "third-party license identifiers missing:\n{stdout}"
+    );
+
+    // `-h` stays compact: the attribution block is long help only.
+    let short = run(dir.path(), &["-h"]);
+    assert_success(&short);
+    assert!(
+        !String::from_utf8_lossy(&short.stdout).contains("Third-party components"),
+        "-h should not repeat the long-help attribution block"
+    );
+}
+
+#[test]
 fn default_jpeg_output_and_high_brightness_warning() {
     let (dir, input) = sequence();
     let output = run(dir.path(), &["-f", "input", "-s", "false", "-b", "95"]);
