@@ -1,0 +1,23 @@
+[package]
+name = "timelapsable"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "White-balance, brightness and crop-stabilization pipeline for image-sequence timelapses"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+kamadak-exif = "0.6.2"
+rawler = "0.8.0"
+rustfft = "6.4"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2.0"
+toml = "0.8"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
