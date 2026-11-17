@@ -49,7 +49,7 @@ pub fn run(cli: Cli) -> Result<()> {
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("cannot create output directory '{}'", output_dir.display()))?;
 
-    let caches = analyze_sequence(&images, &output_dir, cli.steadicam)?;
+    let caches = analyze_sequence(&images, &output_dir, cli.steadicam, cli.no_cache)?;
     let plan = build_plan(&images, &caches, cli.steadicam, white_balance)?;
     print_plan(&plan);
 
@@ -161,6 +161,14 @@ fn print_scan(
         }
     );
     println!(
+        "Analysis cache: {}",
+        if cli.no_cache {
+            "disabled (re-analyzing every frame)"
+        } else {
+            "enabled (valid .meta.*.toml files are reused)"
+        }
+    );
+    println!(
         "Stabilization: {}",
         if cli.steadicam { "enabled" } else { "disabled" }
     );
@@ -181,10 +189,14 @@ fn print_scan(
 }
 
 /// Runs the analysis pass, reusing complete caches without decoding images.
+///
+/// With `no_cache`, cached entries are ignored and every frame is re-analyzed,
+/// which rewrites each `.meta.*.toml` file.
 fn analyze_sequence(
     images: &[InputImage],
     output_dir: &Path,
     steadicam: bool,
+    no_cache: bool,
 ) -> Result<Vec<FrameCache>> {
     println!("Analyzing {} frame(s)...", images.len());
     let mut caches = Vec::with_capacity(images.len());
@@ -197,38 +209,48 @@ fn analyze_sequence(
             .checked_sub(1)
             .map(|previous| images[previous].source.clone());
         let cache_path = output_dir.join(image.meta_name());
-        let load = FrameCache::load(&cache_path, &image.source, expected_prev.as_ref());
 
-        let (mut cache, current_preview) = match load {
-            CacheLoad::Hit(cache) if !steadicam || index == 0 || cache.motion.valid => {
-                cache_hits += 1;
-                println!(
-                    "[{}/{}] {}: cache hit",
-                    index + 1,
-                    images.len(),
-                    image.file_name
-                );
-                caches.push(*cache);
-                // No preview is retained for a cache hit. If the next frame
-                // misses, it lazily decodes this predecessor once.
-                previous_preview = None;
-                continue;
-            }
-            CacheLoad::Hit(_) => {
-                eprintln!(
-                    "warning: cached motion for '{}' is unusable; re-analyzing this frame",
-                    image.file_name
-                );
-                analyze_one(image, expected_prev.clone())?
-            }
-            CacheLoad::Miss { reason } => {
-                if reason != "no cache file" {
-                    eprintln!(
-                        "warning: cache for '{}' is incomplete or invalid ({}); re-analyzing",
-                        image.file_name, reason
+        let (mut cache, current_preview) = if no_cache {
+            println!(
+                "[{}/{}] {}: cache disabled, re-analyzing",
+                index + 1,
+                images.len(),
+                image.file_name
+            );
+            analyze_one(image, expected_prev.clone())?
+        } else {
+            let load = FrameCache::load(&cache_path, &image.source, expected_prev.as_ref());
+            match load {
+                CacheLoad::Hit(cache) if !steadicam || index == 0 || cache.motion.valid => {
+                    cache_hits += 1;
+                    println!(
+                        "[{}/{}] {}: cache hit",
+                        index + 1,
+                        images.len(),
+                        image.file_name
                     );
+                    caches.push(*cache);
+                    // No preview is retained for a cache hit. If the next frame
+                    // misses, it lazily decodes this predecessor once.
+                    previous_preview = None;
+                    continue;
                 }
-                analyze_one(image, expected_prev.clone())?
+                CacheLoad::Hit(_) => {
+                    eprintln!(
+                        "warning: cached motion for '{}' is unusable; re-analyzing this frame",
+                        image.file_name
+                    );
+                    analyze_one(image, expected_prev.clone())?
+                }
+                CacheLoad::Miss { reason } => {
+                    if reason != "no cache file" {
+                        eprintln!(
+                            "warning: cache for '{}' is incomplete or invalid ({}); re-analyzing",
+                            image.file_name, reason
+                        );
+                    }
+                    analyze_one(image, expected_prev.clone())?
+                }
             }
         };
 

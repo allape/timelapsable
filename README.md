@@ -43,6 +43,9 @@ timelapsable -f ./images -s false
 # Export to ./renders instead of ./images/.timelapsable, replacing old results.
 timelapsable -f ./images -o ./renders --overwrite
 
+# Ignore existing caches, re-analyze every frame and rewrite its metadata.
+timelapsable -f ./images --no-cache --overwrite
+
 # Default folder is the current directory and the default format is .jpg.
 timelapsable
 ```
@@ -54,14 +57,15 @@ timelapsable
 | `-f, --folder DIR` | `.` | Single-level input folder. No recursion. |
 | `-o, --output DIR` | `<folder>/.timelapsable` | Directory for rendered images and analysis caches. Relative paths resolve against the current working directory; the directory is created when missing. |
 | `--overwrite` | `false` | Replace output images that already exist. Without it, existing images are skipped and only missing frames are rendered. |
+| `--no-cache` | `false` | Ignore existing analysis caches: every frame is re-analyzed and its `.meta.<stem>.toml` is regenerated. Rendered images are still skipped unless `--overwrite` is also given. |
 | `--format FORMAT` | `.jpg` | Output encoding: `.jpg`/`jpeg` or `.png`. |
 | `-s, --steadicam [BOOL]` | `true` | Enable crop stabilization. `-s false` disables it. |
 | `-w, --white-balance WB` | auto | `auto`, `daylight`, `cloudy`, `shade`, `tungsten`, `fluorescent`, `flash`, or Kelvin in `1500..=15000` such as `5600`/`5600K`. |
 | `-b, --brightness PERCENT` | no manual offset | `-100..=100`. `-100` is pure black, `100` pure white. Values outside `[-90, 90]` produce a warning. |
 
 Long options also accept `--option=value`. The optional `-s` boolean accepts
-`true/false`, `yes/no`, `on/off`, and `1/0`; `--overwrite` is a plain
-switch with no value.
+`true/false`, `yes/no`, `on/off`, and `1/0`; `--overwrite` and `--no-cache` are
+plain switches with no value.
 
 ## Output contract
 
@@ -156,6 +160,9 @@ On startup:
   warning and is regenerated.
 - If only `-b` or `-w` changes, the analysis pass reports cache hits; rendering
   still decodes the source images because the pixels are needed for output.
+- `--no-cache` skips the reuse check: every frame is decoded and re-analyzed,
+  and each `.meta.*.toml` is rewritten. Existing rendered images are still
+  skipped unless `--overwrite` is also given.
 
 Deleting the `.meta.*.toml` files in the output directory forces full
 re-analysis.
@@ -177,9 +184,9 @@ cargo test
 
 The integration tests generate textured and flat PNG sequences, run the real
 binary, and verify output names, the default and `--output` destinations,
-existing-image skipping with `--overwrite`, caching, crop behavior,
-brightness extremes, the special stabilization exit code and argument
-validation.
+existing-image skipping with `--overwrite`, cache reuse and regeneration with
+`--no-cache`, crop behavior, brightness extremes, the special stabilization
+exit code and argument validation.
 
 ## Third-party components
 

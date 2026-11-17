@@ -190,6 +190,52 @@ fn cache_is_reused_when_only_brightness_changes() {
 }
 
 #[test]
+fn no_cache_reanalyzes_every_frame_and_rewrites_metadata() {
+    let (dir, input) = sequence();
+    let args = ["-f", "input", "--format", ".png", "-s", "false"];
+    let first = run(dir.path(), &args);
+    assert_success(&first);
+    let meta_path = default_output(&input).join(".meta.frame_000.toml");
+    let before = fs::metadata(&meta_path).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // A second run without the flag still reuses the caches.
+    let cached = run(dir.path(), &args);
+    assert_success(&cached);
+    assert_eq!(
+        before,
+        fs::metadata(&meta_path).unwrap().modified().unwrap(),
+        "cache should not be rewritten without --no-cache"
+    );
+    assert!(String::from_utf8_lossy(&cached.stdout).contains("5 cache hit(s)"));
+
+    let mut no_cache_args = args.to_vec();
+    no_cache_args.push("--no-cache");
+    let refreshed = run(dir.path(), &no_cache_args);
+    assert_success(&refreshed);
+    assert_ne!(
+        before,
+        fs::metadata(&meta_path).unwrap().modified().unwrap(),
+        "--no-cache must rewrite the metadata file"
+    );
+
+    let stdout = String::from_utf8_lossy(&refreshed.stdout);
+    assert!(
+        stdout.contains("cache disabled, re-analyzing"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("0 cache hit(s)"), "stdout: {stdout}");
+    assert!(stdout.contains("5 frame(s) analyzed"), "stdout: {stdout}");
+
+    let cache: toml::Value = toml::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+    assert_eq!(cache["complete"].as_bool(), Some(true));
+    assert!(cache["checksum"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert_eq!(cache["analysis"]["width"].as_integer(), Some(360));
+}
+
+#[test]
 fn blurry_sequence_uses_special_exit_code_and_can_be_overridden() {
     let dir = TestDir::new("blur");
     let input = dir.path().join("input");

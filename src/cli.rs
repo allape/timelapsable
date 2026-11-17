@@ -47,7 +47,8 @@ impl FromStr for OutputFormat {
     after_help = "Image formats: Sony ARW, JPEG and PNG.\n\
                   Outputs are written as <source-stem>.tlpb.jpg|png to <folder>/.timelapsable/\n\
                   unless --output names another directory. Existing images are skipped\n\
-                  unless --overwrite is given.\n\
+                  unless --overwrite is given. Valid analysis caches are reused unless\n\
+                  --no-cache regenerates them.\n\
                   Stabilization failure exits with status 4."
 )]
 pub struct Cli {
@@ -65,6 +66,12 @@ pub struct Cli {
     /// images are skipped so an interrupted run can be resumed.
     #[arg(long = "overwrite", action = ArgAction::SetTrue)]
     pub overwrite: bool,
+
+    /// Regenerate the per-frame analysis caches. Without this flag, valid
+    /// .meta.*.toml files are reused; with it, every frame is re-analyzed and
+    /// its cache file is rewritten.
+    #[arg(long = "no-cache", action = ArgAction::SetTrue)]
+    pub no_cache: bool,
 
     /// Output format: .jpg or .png.
     #[arg(
